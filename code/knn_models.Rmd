@@ -1,0 +1,933 @@
+---
+title: "R Notebook"
+output:
+  html_document: default
+  html_notebook: default
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Cmd+Option+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Cmd+Shift+K* to preview the HTML file).
+```{r}
+rm(list=ls())
+setwd("/Users/DaanishRaj/Daanish_ALL/Aug 19 2014/Columbia 2014-16/Spring 2017/Thesis/Analyses/v1/ComparingModels/KNN")
+getwd()
+library(dplyr)
+library(ggplot2)
+
+####We will fit a KNN model. We will fit this on different versions of the training and test data. These versions will mimic the transformations we made to the variables in the original training and test data sets, when we fitted the OLS model
+
+
+```
+```{r KNN}
+
+load("orig_test_data.Rda")
+load("orig_training_data.Rda")
+
+names(orig_training_data)
+
+####we remove id and date variables which won't be used as predictors
+training_data<-orig_training_data[,3:21]
+test_data<-orig_test_data[,3:21]
+
+####we also divide the prices by 1000 so that we can compare and display them easily
+training_data$price<-(training_data$price/1000)
+summary(training_data$price)
+
+
+test_data$price<-(test_data$price/1000)
+summary(test_data$price)
+
+
+###separating dependent and independent variables
+price_training_data<-data.frame(training_data[,1])
+colnames(price_training_data)<-c("price")
+
+training_data<-training_data[,-1]
+
+length(training_data)
+##18 variables
+
+
+price_test_data<-data.frame(test_data[,1])
+colnames(price_test_data)<-c("price")
+test_data<-test_data[,-1]
+
+length(test_data)
+##18 variables
+
+
+
+
+#############################################################
+### We start to create a new data set where we will start to save all the transformed variables in our data set
+
+########KNN - fit model 1
+##transforming dependent variable
+log_price_training_data<-log(price_training_data)
+
+###transforming independent variables
+log_sqft_living<-log(training_data$sqft_living)
+log_sqft_lot<-log(training_data$sqft_lot)
+age<-2017-training_data$yr_built
+age_renov<-ifelse(training_data$yr_renovated!=0, 2017-training_data$yr_renovated, 0)
+
+
+
+training_data_1<-cbind(training_data,log_sqft_living, age, log_sqft_lot, age_renov)
+
+length(training_data_1)
+##22 variables
+
+training_data_1$price<-training_data_1$sqft_living<-training_data_1$sqft_lot<-training_data_1$yr_built<-training_data_1$yr_renovated<-NULL
+
+length(training_data_1)
+##18 variables
+
+
+####Before we begin, we need to add the relevant variables to the test data set as well
+
+
+##transforming dependent variable
+log_price_test_data<-log(price_test_data)
+
+##transforming independent variable
+log_sqft_living<-log(test_data$sqft_living)
+log_sqft_lot<-log(test_data$sqft_lot)
+age<-2017-test_data$yr_built
+age_renov<-ifelse(test_data$yr_renovated!=0, 2017-test_data$yr_renovated, 0)
+
+
+test_data_1<-cbind(test_data,log_sqft_living, age, log_sqft_lot, age_renov)
+
+length(test_data_1)
+##22 variables
+
+
+test_data_1$price<-test_data_1$sqft_living<-test_data_1$sqft_lot<-test_data_1$yr_built<-test_data_1$yr_renovated<-NULL
+length(test_data_1)
+##18 variables
+
+
+#######Now, we will scale both training and test data sets, which contain the independent variables. 
+
+training_data_1<-scale(training_data_1)
+test_data_1<-scale(test_data_1)
+
+###verifying this worked
+colMeans(training_data_1)
+apply(training_data_1, 2, sd)
+
+colMeans(test_data_1)
+apply(test_data_1, 2, sd)
+
+
+KNN_RMSE<-c()
+KNN_optimalK<-c()
+
+
+
+###############Now fit KNN - model 1
+
+
+
+# performance<-function(model, dataset)
+# {
+#   pred_log_price<-predict(model, dataset)
+#   
+#   pred_price<-exp(pred_log_price)
+#   price<-dataset$price
+#   mse<-mean((pred_price-test_data$price)^2)
+#   rmse<-sqrt(mse)
+#   return(rmse)
+#   
+# }
+
+
+###############Now fit KNN - model 1
+######
+#####function: implementKNN
+####arguments: training data frame, test data frame, type of distance - Euclidean, Manhattan etc - this is a string, power of the Minkowski distance - a number)
+###returns a vector of RMSE values for values of k ranging from 1 to 20
+
+
+implementKNN<-function(traindata, testdata, type, minkowskiPower)
+{
+  method = type
+  p=minkowskiPower
+  nrow(traindata)  
+  nrow(testdata)
+  
+combined_data<-rbind(traindata, testdata)
+nrow(combined_data)
+ncol(combined_data)
+
+combined_dist<-as.matrix(dist(combined_data, method, p))
+
+dim(combined_dist)
+### what we are looking for
+#diag(combined_dist)
+
+rowindex<-c(1:7088)
+colindex<-c(7089:13515)
+
+distance_matrix<-combined_dist[-rowindex,-colindex]
+dim(distance_matrix)
+
+
+
+####we write a function which takes in a row vector and returns the indices of the smallest 100 elements in ascending order. These indices correspond to the column number
+
+neighbours<-100
+
+f <- function(rw) {
+  O <- order(rw)[1:neighbours]
+}
+
+####we use apply and call this function on each row of the distance matrix. For each observation in the test set, this will give us the closest 20 neighbours.This function returns a 6427*20 matrix (it has reduced the number of columns)
+
+NNmat <- t(apply(distance_matrix,1,f))
+dim(NNmat)
+#NNmat[1,]
+
+###this function takes as input a row vector. It uses the indices in the row and subsets prices from the training data set according to these indices. The mean of these prices is computed and returned as our predicted price for that particular test observation
+fn<-function(rw)
+{
+ kNNindex<-c(rw)
+ NNprice<-price_training_data[kNNindex,]
+ predicted_price<-mean(NNprice)
+ 
+}
+
+#n=nrow(price_test_data)
+
+##creating a list to store the values of the RMSE for different values of k
+
+RMSE<-rep(NA,neighbours)
+
+for (k in 1:neighbours)
+{
+  ###create a new matrix with only as many columns as the number of nearest neighbours we are considering
+  mat<-as.matrix(NNmat[,1:k])
+  #dim(mat)
+  
+  ###now call the function f on each row of this matrix. prediction is a vector of length 6427 - one predicted price for each test observation
+  
+  prediction <- (apply(mat,1,fn))
+  #class(prediction)
+  prediction<-data.frame(prediction)
+  
+  ##calculate RMSE and store the value in the corresponding entry of the RMSE list
+  df<-cbind(price_test_data, prediction)
+  df$error<-df$price - df$prediction
+  df$error<-(df$error)^2
+  mse<-mean(df$error)
+  rmse<-sqrt(mse)
+  RMSE[k]<-rmse
+  #kNNRMSE
+
+}
+
+return(RMSE)  
+}
+
+
+
+
+RMSE_model_1<-implementKNN(training_data_1, test_data_1, "euclidean", 2)
+
+KNN_RMSE[1]<-min(RMSE_model_1)
+##The min value is 179982.5
+
+KNN_optimalK[1]<-which.min(RMSE_model_1)
+###k=6 is optimal
+
+KNN_RMSE
+KNN_optimalK
+
+```
+
+```{r KNN - model 2}
+#####Now we mimic the data set used in second model of OLS
+
+####Model 2 in OLS was:
+#lm.model2=lm(log_price~log_sqft_living + bedrooms + bathrooms + grade + waterfront,data=training_data)
+
+temp<-data.frame(training_data_1)
+training_data_2<-cbind(temp$log_sqft_living, temp$bedrooms,temp$bathrooms, temp$grade,temp$waterfront)
+
+#####note that training_data_1 is already scaled so we don't have to scale again
+
+temp<-data.frame(test_data_1)
+test_data_2<-cbind(temp$log_sqft_living, temp$bedrooms,temp$bathrooms, temp$grade,temp$waterfront)
+
+rm(temp)
+
+RMSE_model_2<-implementKNN(training_data_2,test_data_2, "euclidean",2)
+
+RMSE_model_2
+
+KNN_RMSE[2]<-min(RMSE_model_2)
+##The min value is 179982.5
+
+KNN_optimalK[2]<-which.min(RMSE_model_2)
+###k=6 is optimal
+
+KNN_RMSE
+KNN_optimalK
+
+```
+
+```{r KNN - Model 3}
+###Now we mimic model 3 from OLS which was:
+#lm.model3<-lm(log_price~log_sqft_living + grade + condition + bedrooms + bathrooms + waterfront + log_sqft_lot + sqft_above + sqft_basement + sqft_living15 + floors + view + zipcode + lat + long, data = training_data_1)
+
+##note here that waterfront and zipcode were factors
+
+###transforming independent variables
+log_sqft_living<-log(training_data$sqft_living)
+log_sqft_lot<-log(training_data$sqft_lot)
+age<-2017-training_data$yr_built
+age_renov<-ifelse(training_data$yr_renovated!=0, 2017-training_data$yr_renovated, 0)
+
+
+temp<-cbind(training_data,log_sqft_living, age, log_sqft_lot, age_renov)
+
+length(temp)
+##22 variables
+
+temp$price<-temp$sqft_living<-temp$sqft_lot<-temp$yr_built<-temp$yr_renovated<-NULL
+
+length(temp)
+##18 variables
+
+
+######Now we only keep the variables we used in OLS model 3
+#lm.model3<-lm(log_price~log_sqft_living + grade + condition + bedrooms + bathrooms + waterfront + log_sqft_lot + sqft_above + sqft_basement + sqft_living15 + floors + view + zipcode + lat + long, data = training_data_1)
+
+#temp1<-data.frame(cbind(temp$log_sqft_living, temp$grade, temp$condition, temp$bedrooms, temp$bathrooms, temp$waterfront, temp$log_sqft_lot, temp$sqft_above, temp$sqft_basement, temp$sqft_living15, temp$floors, temp$view, temp$zipcode, temp$lat, temp$long))
+
+temp1<-temp%>%
+  select(log_sqft_living, grade, condition, bedrooms, bathrooms, waterfront, log_sqft_lot, sqft_above, sqft_basement, sqft_living15,floors, view, zipcode, lat, long)
+
+class(temp1)
+length(temp1)
+##15 variables
+
+length(unique(temp$waterfront))
+
+##2 unique values
+
+length(unique(temp1$zipcode))
+###70 unique values
+
+#####now we need to create one dummy variable for each unique value of waterfront and zipcode, since these were factors. In all, our data set should have 15 + 2+ 70 - 2-2 = 83 variables. We remove zipcode and waterfront after creating the different dummies
+
+temp2<-temp1
+length(temp2)
+
+for(t in unique(temp2$waterfront)) {
+   temp2[paste("waterfront",t,sep="")] <- ifelse(temp2$waterfront==t,1,0)
+}
+
+length(temp2)
+
+
+for(t in unique(temp2$zipcode)) {
+   temp2[paste("zipcode",t,sep="")] <- ifelse(temp2$zipcode==t,1,0)
+}
+
+
+
+length(temp2)
+
+
+temp2$zipcode<-NULL
+temp2$waterfront<-NULL
+temp2$zipcode98001<-NULL
+temp2$waterfront0<-NULL
+
+length(temp2)
+###83 variables - what we want!
+#####we retain temp, temp1 and temp2 for now
+
+#####Now we need to standardize all the columns before calling KNN
+training_data_3<-scale(temp2)
+
+colMeans(training_data_3)
+apply(training_data_3, 2, sd)
+####works well
+
+######Now, repeat the same process for the test data
+###transforming independent variables
+log_sqft_living<-log(test_data$sqft_living)
+log_sqft_lot<-log(test_data$sqft_lot)
+age<-2017-test_data$yr_built
+age_renov<-ifelse(test_data$yr_renovated!=0, 2017-test_data$yr_renovated, 0)
+
+
+temp_test<-cbind(test_data,log_sqft_living, age, log_sqft_lot, age_renov)
+length(temp_test)
+##22 variables
+
+temp_test$price<-temp_test$sqft_living<-temp_test$sqft_lot<-temp_test$yr_built<-temp_test$yr_renovated<-NULL
+
+length(temp_test)
+##18 variables
+
+
+temp1_test<-temp_test%>%
+  select(log_sqft_living, grade, condition, bedrooms, bathrooms, waterfront, log_sqft_lot, sqft_above, sqft_basement, sqft_living15,floors, view, zipcode, lat, long)
+
+class(temp1_test)
+length(temp1_test)
+##15 variables
+
+length(unique(temp1_test$waterfront))
+
+##2 unique values
+
+length(unique(temp1_test$zipcode))
+###70 unique values
+
+#####now we need to create one dummy variable for each unique value of waterfront and zipcode, since these were factors. In all, our data set should have 15 + 2+ 70 - 1-1 = 85 variables. We remove zipcode and waterfront after creating the different dummies
+
+temp2_test<-temp1_test
+length(temp2_test)
+
+for(t in unique(temp2_test$waterfront)) {
+   temp2_test[paste("waterfront",t,sep="")] <- ifelse(temp2_test$waterfront==t,1,0)
+}
+
+length(temp2_test)
+
+
+for(t in unique(temp2_test$zipcode)) {
+   temp2_test[paste("zipcode",t,sep="")] <- ifelse(temp2_test$zipcode==t,1,0)
+}
+
+length(temp2_test)
+
+
+temp2_test$zipcode<-NULL
+temp2_test$waterfront<-NULL
+temp2_test$zipcode98056<-NULL
+temp2_test$waterfront0<-NULL
+
+
+
+length(temp2_test)
+###83 variables - what we want!
+#####we retain temp, temp1 and temp2_test for now
+
+#####Now we need to standardize all the columns before calling KNN
+test_data_3<-scale(temp2_test)
+colMeans(test_data_3)
+apply(test_data_3, 2, sd)
+##fine
+
+####Note:
+###temp - contains all variables from original data set, some with log transformations, age, age_renov.
+###temp1  -contains only those variables used in OLS model 3. Subsetted from temp
+###temp2 - used temp1, and now generated dummies out of waterfront and zipcode
+#### - none of the above 3 data sets are scaled.
+
+RMSE_model_3<-implementKNN(training_data_3, test_data_3, "euclidean", 2)
+
+RMSE_model_3
+
+KNN_RMSE[3]<-min(RMSE_model_3)
+
+KNN_optimalK[3]<-which.min(RMSE_model_3)
+###k=6 is optimal
+
+KNN_RMSE
+KNN_optimalK
+
+
+```
+
+```{r - Implement Model 4 in KNN}
+###Model 4 in OLS was:
+#lm.model4<-lm(log_price~log_sqft_living + grade + condition + bedrooms + bathrooms + waterfront + log_sqft_lot + sqft_above + sqft_basement + floors + sqft_living15+ view + zipcode + poly(lat,13) + poly(long,17), data = training_data_1)
+
+
+###we use temp2 from before and now creat polynomial terms for lat and long. We should have 85 + 13+17 - 1-1 = 113 variables in temp3
+
+temp3<-temp2
+
+for (t in 1:13)
+{
+  a<-(temp2$lat)^t
+  temp3[,paste0("lat",t)]<-a
+}
+
+temp3$lat<-NULL
+length(temp3)
+###97 variables
+
+
+for (t in 1:17)
+{
+  a<-(temp2$long)^t
+  temp3[,paste0("long",t)]<-a
+}
+
+temp3$long<-NULL
+length(temp3)
+###113 variables
+
+#######repeat same for test data
+temp3_test<-temp2_test
+
+for (t in 1:13)
+{
+  a<-(temp2_test$lat)^t
+  temp3_test[,paste0("lat",t)]<-a
+}
+
+temp3_test$lat<-NULL
+length(temp3_test)
+###97 variables
+
+
+for (t in 1:17)
+{
+  a<-(temp2_test$long)^t
+  temp3_test[,paste0("long",t)]<-a
+}
+
+temp3_test$long<-NULL
+length(temp3_test)
+####113 variables
+
+####scale the data sets
+training_data_4<-scale(temp3)
+class(training_data_4)
+ncol(training_data_4)
+
+test_data_4<-scale(temp3_test)
+ncol(test_data_4)
+
+colMeans(test_data_4)
+apply(test_data_4, 2, sd)
+apply(training_data_4, 2, sd)
+##okay
+
+####Now call KNN
+RMSE_model_4<-implementKNN(training_data_4, test_data_4, "euclidean", 2)
+
+RMSE_model_4
+
+KNN_RMSE[4]<-min(RMSE_model_4)
+###KNN_optimalK<-c()
+
+KNN_optimalK[4]<-which.min(RMSE_model_4)
+
+KNN_RMSE
+KNN_optimalK
+
+
+```
+
+```{r Trying KNN with manhattan distance}
+KNN_RMSE_l1<-c()
+KNN_optimalK_l1<-c()
+
+dim(training_data_1)
+dim(test_data_1)
+
+RMSE_model_1_manhattan<-implementKNN(training_data_1, test_data_1, "manhattan", 1)
+RMSE_model_1_manhattan
+
+KNN_RMSE_l1[1]<-min(RMSE_model_1_manhattan)
+KNN_optimalK_l1[1]<-which.min(RMSE_model_1_manhattan)
+
+
+#####Need to run these and then plot graphs
+RMSE_model_2_manhattan<-implementKNN(training_data_2, test_data_2, "manhattan", 1)
+RMSE_model_2_manhattan
+
+KNN_RMSE_l1[2]<-min(RMSE_model_2_manhattan)
+KNN_optimalK_l1[2]<-which.min(RMSE_model_2_manhattan)
+
+
+RMSE_model_3_manhattan<-implementKNN(training_data_3, test_data_3, "manhattan", 1)
+RMSE_model_3_manhattan
+
+KNN_RMSE_l1[3]<-min(RMSE_model_3_manhattan)
+KNN_optimalK_l1[3]<-which.min(RMSE_model_3_manhattan)
+
+
+
+RMSE_model_4_manhattan<-implementKNN(training_data_4, test_data_4, "manhattan", 1)
+RMSE_model_4_manhattan
+
+KNN_RMSE_l1[4]<-min(RMSE_model_4_manhattan)
+KNN_optimalK_l1[4]<-which.min(RMSE_model_4_manhattan)
+
+KNN_RMSE
+KNN_optimalK
+
+KNN_RMSE_l1
+KNN_optimalK_l1
+
+######may need to drop the extra dummy variable from Models 3 and 4
+
+
+```
+```{r - Export data frames}
+#####we export the 4 data frames used for the 4 different models: we will use the same variables in each data set when we try other techniques
+
+####we rewrite code to make these data sets again tp avoid confusion. We then export them
+
+###temp1 - contains all variables from original data set, some with log transformations, age, age_renov. length:18
+###temp2  -contains only those 5 variables used in OLS model 2 
+###temp3 - contains only  those variables used in OLS model 3. Length: 85 
+###temp4 - contains only  those variables used in OLS model 4. Length: 113 
+
+#### - NONE of the above 4 data sets are scaled.
+
+
+# temp4<-temp3
+# temp3<-temp2
+
+
+log_price_training_data<-log(price_training_data)
+
+###transforming independent variables
+log_sqft_living<-log(training_data$sqft_living)
+log_sqft_lot<-log(training_data$sqft_lot)
+age<-2017-training_data$yr_built
+age_renov<-ifelse(training_data$yr_renovated!=0, 2017-training_data$yr_renovated, 0)
+
+
+temp1<-data.frame(cbind(training_data,log_sqft_living, age, log_sqft_lot, age_renov))
+
+length(temp1)
+##22 variables
+
+temp1$price<-temp1$sqft_living<-temp1$sqft_lot<-temp1$yr_built<-temp1$yr_renovated<-NULL
+
+length(temp1)
+##18 variables
+
+
+
+##transforming dependent variable
+log_price_test_data<-log(price_test_data)
+
+##transforming independent variable
+log_sqft_living<-log(test_data$sqft_living)
+log_sqft_lot<-log(test_data$sqft_lot)
+age<-2017-test_data$yr_built
+age_renov<-ifelse(test_data$yr_renovated!=0, 2017-test_data$yr_renovated, 0)
+
+
+temp1_test<-cbind(test_data,log_sqft_living, age, log_sqft_lot, age_renov)
+
+length(temp1_test)
+##22 variables
+
+
+temp1_test$price<-temp1_test$sqft_living<-temp1_test$sqft_lot<-temp1_test$yr_built<-temp1_test$yr_renovated<-NULL
+length(temp1_test)
+##18 variables
+
+
+temp2<-temp1%>%
+  select(log_sqft_living, bedrooms, bathrooms,grade,waterfront) 
+
+length(temp2)
+###5 variables
+
+temp2_test<-temp1_test%>%
+  select(log_sqft_living, bedrooms, bathrooms,grade,waterfront) 
+
+length(temp2_test)
+###5 variables
+
+
+temp3<-temp1%>%
+  select(log_sqft_living, grade, condition, bedrooms, bathrooms, waterfront, log_sqft_lot, sqft_above, sqft_basement, sqft_living15,floors, view, zipcode, lat, long)
+
+length(temp3)
+
+for(t in unique(temp3$waterfront)) {
+   temp3[paste("waterfront",t,sep="")] <- ifelse(temp3$waterfront==t,1,0)
+}
+
+length(temp3)
+
+
+for(t in unique(temp3$zipcode)) {
+   temp3[paste("zipcode",t,sep="")] <- ifelse(temp3$zipcode==t,1,0)
+}
+
+length(temp3)
+
+
+temp3$zipcode<-NULL
+temp3$waterfront<-NULL
+
+###importantly, also need to drop another dummy variable to avoid perfect collinearity
+
+temp3$zipcode98178<-NULL
+temp3$waterfront0<-NULL
+
+length(temp3)
+###83 variables - what we want!
+
+temp3_test<-temp1_test%>%
+  select(log_sqft_living, grade, condition, bedrooms, bathrooms, waterfront, log_sqft_lot, sqft_above, sqft_basement, sqft_living15,floors, view, zipcode, lat, long)
+
+length(temp3_test)
+
+for(t in unique(temp3_test$waterfront)) {
+   temp3_test[paste("waterfront",t,sep="")] <- ifelse(temp3_test$waterfront==t,1,0)
+}
+
+length(temp3_test)
+
+
+for(t in unique(temp3_test$zipcode)) {
+   temp3_test[paste("zipcode",t,sep="")] <- ifelse(temp3_test$zipcode==t,1,0)
+}
+
+length(temp3_test)
+
+
+temp3_test$zipcode<-NULL
+temp3_test$waterfront<-NULL
+
+temp3_test$zipcode98178<-NULL
+temp3_test$waterfront0<-NULL
+
+
+length(temp3_test)
+###85 variables - what we want!
+#####we retain temp, temp1 and temp2 for now
+
+
+
+temp4<-temp3
+
+for (t in 1:13)
+{
+  a<-(temp3$lat)^t
+  temp4[,paste0("lat",t)]<-a
+}
+
+temp4$lat<-NULL
+length(temp4)
+###97 variables
+
+
+for (t in 1:17)
+{
+  a<-(temp3$long)^t
+  temp4[,paste0("long",t)]<-a
+}
+
+temp4$long<-NULL
+length(temp4)
+###113 variables
+
+#######repeat same for test data
+temp4_test<-temp3_test
+
+for (t in 1:13)
+{
+  a<-(temp3_test$lat)^t
+  temp4_test[,paste0("lat",t)]<-a
+}
+
+temp4_test$lat<-NULL
+length(temp4_test)
+###97 variables
+
+
+for (t in 1:17)
+{
+  a<-(temp3_test$long)^t
+  temp4_test[,paste0("long",t)]<-a
+}
+
+temp4_test$long<-NULL
+length(temp4_test)
+####113 variables
+
+
+
+######now create a model 5 also  - using only the 5th degree polynomial terms for lat and long since this aids easy interpretability
+
+temp5<-temp3
+
+for (t in 1:5)
+{
+  a<-(temp3$lat)^t
+  temp5[,paste0("lat",t)]<-a
+}
+
+temp5$lat<-NULL
+length(temp5)
+###97 variables
+
+
+for (t in 1:5)
+{
+  a<-(temp3$long)^t
+  temp5[,paste0("long",t)]<-a
+}
+
+temp5$long<-NULL
+length(temp5)
+###91 variables
+
+#######repeat same for test data
+temp5_test<-temp3_test
+
+for (t in 1:5)
+{
+  a<-(temp3_test$lat)^t
+  temp5_test[,paste0("lat",t)]<-a
+}
+
+temp5_test$lat<-NULL
+length(temp5_test)
+###97 variables
+
+
+for (t in 1:5)
+{
+  a<-(temp3_test$long)^t
+  temp5_test[,paste0("long",t)]<-a
+}
+
+temp5_test$long<-NULL
+length(temp5_test)
+####91 variables
+
+
+
+
+write.csv(temp1, "model1_training.csv", row.names = FALSE)
+write.csv(temp2, "model2_training.csv", row.names = FALSE)
+write.csv(temp3, "model3_training.csv", row.names = FALSE)
+write.csv(temp4, "model4_training.csv", row.names = FALSE)
+write.csv(temp5, "model5_training.csv", row.names = FALSE)
+
+write.csv(temp1_test, "model1_test.csv", row.names = FALSE)
+write.csv(temp2_test, "model2_test.csv", row.names = FALSE)
+write.csv(temp3_test, "model3_test.csv", row.names = FALSE)
+write.csv(temp4_test, "model4_test.csv", row.names = FALSE)
+write.csv(temp5_test, "model5_test.csv", row.names = FALSE)
+
+
+#######One time outsheeting the training and test prices
+#price_test_data<-(price_test_data*1000)
+#price_training_data<-(price_training_data*1000)
+
+#write.csv(price_training_data, "price_training_data.csv", row.names = FALSE)
+#write.csv(price_test_data, "price_test_data.csv", row.names = FALSE)
+
+
+##############DONE!!!!! USE THESE FILES
+
+
+########Now do KNN on Model 5 as well
+model5_training_data<-read.csv("model5_training.csv")
+model5_test_data<-read.csv("model5_test.csv")
+
+model5_training_data<-as.matrix(model5_training_data)
+model5_test_data<-as.matrix(model5_test_data)
+
+####need to scale
+model5_training_data<-scale(model5_training_data)
+model5_test_data<-scale(model5_test_data)
+
+RMSE_model_5<-implementKNN(model5_training_data, model5_test_data, "euclidean", 2)
+
+#RMSE_model_4_manhattan<-implementKNN(, test_data_4, "manhattan", 1)
+RMSE_model_5
+min(RMSE_model_5)
+
+RMSE_model_5_manhattan<-implementKNN(model5_training_data, model5_test_data, "manhattan", 1)
+
+
+RMSE_model_5_manhattan
+
+
+
+KNN_RMSE[1]<-min(RMSE_model_1)
+KNN_optimalK[1]<-which.min(RMSE_model_1)
+
+KNN_RMSE[2]<-min(RMSE_model_2)
+KNN_optimalK[2]<-which.min(RMSE_model_2)
+
+KNN_RMSE[3]<-min(RMSE_model_3)
+KNN_optimalK[3]<-which.min(RMSE_model_3)
+
+KNN_RMSE[4]<-min(RMSE_model_4)
+KNN_optimalK[4]<-which.min(RMSE_model_4)
+
+KNN_RMSE[5]<-min(RMSE_model_5)
+KNN_optimalK[5]<-which.min(RMSE_model_5)
+
+
+KNN_RMSE_l1[1]<-min(RMSE_model_1_manhattan)
+KNN_optimalK_l1[1]<-which.min(RMSE_model_1_manhattan)
+
+KNN_RMSE_l1[2]<-min(RMSE_model_2_manhattan)
+KNN_optimalK_l1[2]<-which.min(RMSE_model_2_manhattan)
+
+KNN_RMSE_l1[3]<-min(RMSE_model_3_manhattan)
+KNN_optimalK_l1[3]<-which.min(RMSE_model_3_manhattan)
+
+KNN_RMSE_l1[4]<-min(RMSE_model_4_manhattan)
+KNN_optimalK_l1[4]<-which.min(RMSE_model_4_manhattan)
+
+KNN_RMSE_l1[5]<-min(RMSE_model_5_manhattan)
+KNN_optimalK_l1[5]<-which.min(RMSE_model_5_manhattan)
+
+
+library(ggplot2)
+num<-seq(1:100)
+qplot(num, RMSE_model_1, color="red")+
+  labs(x="k")+
+  labs(y="RMSE")+
+  guides(color=FALSE)
+  
+qplot(num, RMSE_model_2, color="red")+
+  labs(x="k")+
+  labs(y="RMSE")+
+  guides(color=FALSE)
+
+
+
+qplot(num, RMSE_model_1_manhattan, color="red")+
+  labs(x="k")+
+  labs(y="RMSE")+
+  guides(color=FALSE)
+
+
+
+KNN_RMSE
+KNN_optimalK
+
+KNN_RMSE_l1
+KNN_optimalK_l1
+
+setwd("/Users/DaanishRaj/Daanish_ALL/Aug 19 2014/Columbia 2014-16/Spring 2017/Thesis/Analyses/v1/ComparingModels/KNN")
+
+getwd()
+save.image(file ="latest.RData")
+
+```
+

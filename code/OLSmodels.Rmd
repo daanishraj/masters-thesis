@@ -1,0 +1,338 @@
+---
+title: "R Notebook"
+output:
+  html_document: default
+  html_notebook: default
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Cmd+Option+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Cmd+Shift+K* to preview the HTML file).
+
+```{r Loading the data}
+setwd("/Users/DaanishRaj/Daanish_ALL/Aug 19 2014/Columbia 2014-16/Spring 2017/Thesis/Analyses/v1/ComparingModels")
+getwd()
+
+rm(list=ls())
+
+#setwd("..")
+#getwd()
+
+load("training_sc.Rda")
+load("test_sc.Rda")
+
+load("price_training_data.Rda")
+load("price_test_data.Rda")
+
+dim(training_sc)
+dim(test_sc)
+
+training_sc<-data.frame(training_sc)
+test_sc<-data.frame(test_sc)
+
+######for linear regression, we will use the data set where variables haven't been standardized. Since we care about interpretability as well
+
+load("orig_test_data.Rda")
+load("orig_training_data.Rda")
+
+####we remove id and date variables which won't be used as predictors
+training_data<-orig_training_data[,3:21]
+test_data<-orig_test_data[,3:21]
+
+####we also divide the prices by 1000 so that we can compare and display them easily
+training_data$price<-(training_data$price/1000)
+summary(training_data$price)
+
+summary(test_data$price)
+test_data$price<-(test_data$price/1000)
+
+### We start to create a new data set where we will start to save all the transformed variables in our data set
+#temp_1<-
+
+log_price<-log(training_data$price)
+log_sqft_living<-log(training_data$sqft_living)
+log_sqft_lot<-log(training_data$sqft_lot)
+
+age<-2017-training_data$yr_built
+age_renov<-ifelse(training_data$yr_renovated!=0, 2017-training_data$yr_renovated, 0)
+
+training_data<-cbind(training_data, log_price, log_sqft_living, age, log_sqft_lot, age_renov)
+
+####Before we begin, we need to add the relevant variables to the test data set as well
+summary(test_data$price)
+
+log_price<-log(test_data$price)
+log_sqft_living<-log(test_data$sqft_living)
+log_sqft_lot<-log(test_data$sqft_lot)
+age<-2017-test_data$yr_built
+age_renov<-ifelse(test_data$yr_renovated!=0, 2017-test_data$yr_renovated, 0)
+
+#age_renov<-2017-test_data$yr_renovated
+
+
+test_data<-cbind(test_data, log_price, log_sqft_living, age, log_sqft_lot, age_renov)
+
+
+performance<-function(model, dataset)
+{
+  pred_log_price<-predict(model, dataset)
+  
+  pred_price<-exp(pred_log_price)
+  price<-dataset$price
+  mse<-mean((pred_price-test_data$price)^2)
+  rmse<-sqrt(mse)
+  return(rmse)
+  
+}
+
+
+
+
+```
+
+```{r Linear Regression Models}
+#####initialize lists which will store our RMSE & R2 results from each model
+OLS_RMSE<-c()
+OLS_AdjRsquared<-c()
+
+temp_training<-training_data
+temp_training$price<-temp_training$sqft_living<-temp_training$sqft_lot<-temp_training$yr_built<-temp_training$yr_renovated<-NULL
+names(temp_training)
+
+temp_test<-test_data
+temp_test$price<-temp_test$sqft_living<-temp_test$sqft_lot<-temp_test$yr_built<-temp_test$yr_renovated<-NULL
+names(temp_test)
+
+
+
+# #vars<-c("log_sqft_living", "log_sqft_lot", "log_price", "age", "age_renov",
+#         "sqft_lot15", "sqft_living15", "long", "lat", "zipcode", "sqft_basement",
+#         "sqft_above", "grade", "condition", "view", "waterfront", "floors", "bathrooms", "bedrooms")
+
+
+####Failed methods to subset data :(
+##vars<-c("price", "sqft_living", "sqft_lot", "yr_built", "yr_renovated")
+
+
+##temp<-subset(temp, select = -c("price", "sqft_living", "sqft_lot", "yr_built", "yr_renovated"))
+
+##temp<-temp[,c("price", "sqft_living", "sqft_lot", "yr_built", "yr_renovated")=NULL]
+#temp<-DT[,c("col1","col20"):=NULL]
+#subset(mtcars, , -c(mpg, cyl, disp, hp))
+
+###model 1 is the full model - includes all variables
+
+lm.model1=lm(log_price~., data=temp_training)
+summary(lm.model1)
+
+lm.model1test=lm(log_price~., data=temp_test)
+summary(lm.model1test)
+
+
+OLS_RMSE[1]<-performance(lm.model1, temp_test)
+OLS_AdjRsquared[1]<-summary(lm.model1)$adj.r.squared
+
+#rm(temp)
+
+
+####Model 2 is a short baseline model - includes the variables we think are most relevant based on EDA
+
+lm.model2=lm(log_price~log_sqft_living + bedrooms + bathrooms + grade + waterfront,data=training_data)
+
+lm.model2test=lm(log_price~log_sqft_living + bedrooms + bathrooms + grade + waterfront,data=test_data)
+
+summary(lm.model2)
+summary(lm.model2test)
+
+OLS_RMSE[2]<-performance(lm.model2, test_data)
+OLS_AdjRsquared[2]<-summary(lm.model2)$adj.r.squared
+
+
+####### 
+training_data_1<-training_data
+training_data_1$zipcode<-factor(training_data_1$zipcode)
+levels(training_data_1$zipcode)
+##succesful conversion
+training_data_1$waterfront<-factor(training_data_1$waterfront)
+levels(training_data_1$waterfront)
+
+###make similar changes to the test data set as well
+test_data_1<-test_data
+test_data_1$zipcode<-factor(test_data_1$zipcode)
+test_data_1$waterfront<-factor(test_data_1$waterfront)
+levels(test_data_1$waterfront)
+
+
+######Model 3  - some more variables - and we convert waterfront and zipcode into factors
+
+lm.model3<-lm(log_price~log_sqft_living + grade + condition + bedrooms + bathrooms + waterfront + log_sqft_lot + sqft_above + sqft_basement + sqft_living15 + floors + view + zipcode + lat + long, data = training_data_1)
+
+lm.model3test<-lm(log_price~log_sqft_living + grade + condition + bedrooms + bathrooms + waterfront + log_sqft_lot + sqft_above + sqft_basement + sqft_living15 + floors + view + zipcode + lat + long, data = test_data_1)
+
+summary(lm.model3test)
+
+OLS_RMSE[3]<-performance(lm.model3, test_data_1)
+OLS_AdjRsquared[3]<-summary(lm.model3)$adj.r.squared
+
+
+######Model 4 - include polynomial for lat and long
+
+####Note - we tried polynomial terms for long - 
+###quadtratic gives rmse - 131.573, cubic rmse - 131.5731
+##10th degree - 131.1996
+
+###lat
+##cubic - 130.6537
+##5th degree - 130.2479
+
+####lat  - 13 and long 17 - 129.7619
+
+
+lm.model4<-lm(log_price~log_sqft_living + grade + condition + bedrooms + bathrooms + waterfront + log_sqft_lot + sqft_above + sqft_basement + floors + sqft_living15+ view + zipcode + poly(lat,13) + poly(long,17), data = training_data_1)
+
+performance(lm.model4, test_data_1)
+
+lm.model4test<-lm(log_price~log_sqft_living + grade + condition + bedrooms + bathrooms + waterfront + log_sqft_lot + sqft_above + sqft_basement + floors + sqft_living15+ view + zipcode + poly(lat,13) + poly(long,17), data = test_data_1)
+
+summary(lm.model4test)
+
+
+#####Model 5 - easy interpretability - use only cubic polynomial termss
+
+
+lm.model5<-lm(log_price~log_sqft_living + grade + condition + bedrooms + bathrooms + waterfront + log_sqft_lot + sqft_above + sqft_basement + floors + sqft_living15+ view + zipcode + poly(lat,5) + poly(long,5), data = training_data_1)
+
+performance(lm.model5, test_data_1)
+
+lm.model5test<-lm(log_price~log_sqft_living + grade + condition + bedrooms + bathrooms + waterfront + log_sqft_lot + sqft_above + sqft_basement + floors + sqft_living15+ view + zipcode + poly(lat,5) + poly(long,5), data = test_data_1)
+
+summary(lm.model5test)
+
+
+
+
+
+#nrow(test_data_1)
+#nrow(training_data_1)
+
+OLS_RMSE[4]<-performance(lm.model4, test_data_1)
+OLS_AdjRsquared[4]<-summary(lm.model4)$adj.r.squared
+
+OLS_RMSE[5]<-performance(lm.model5, test_data_1)
+OLS_AdjRsquared[5]<-summary(lm.model5)$adj.r.squared
+
+
+
+OLS_testRsquared<-c()
+
+OLS_testRsquared[1]<-0.7788
+
+summary(lm.model1test)
+summary(lm.model2test)
+OLS_testRsquared[2]<-0.5877
+summary(lm.model3test)
+OLS_testRsquared[3]<-0.8913
+summary(lm.model4test)
+OLS_testRsquared[4]<-0.8975
+summary(lm.model5test)
+OLS_testRsquared[5]<-0.8952
+
+summary(lm.model1)
+summary(lm.model2)
+summary(lm.model3)
+summary(lm.model4)
+summary(lm.model5)
+
+
+OLS_RMSE
+OLS_AdjRsquared
+OLS_testRsquared
+
+
+####This suggests that we want to give more freedom to the lat and long variables
+###what if we made long a factor?
+
+
+length(unique(training_data_1$long))
+##642 unique values
+
+length(unique(test_data_1$long))
+###only 610 unique values
+
+######this will cause problems when fitting the model on the test data. So we abandon the idea for now
+
+
+# training_data_1$long<-factor(training_data_1$long)
+# test_data_1$long<-factor(test_data_1$long)
+# 
+# levels(training_data_1$long)
+# 
+# lm.model5<-lm(log_price~log_sqft_living + grade + condition + bedrooms + bathrooms + waterfront + log_sqft_lot + sqft_above + sqft_basement + sqft_living15 + floors + view + zipcode + poly(lat,13) + long, data = training_data_1)
+# 
+# performance(lm.model5, test_data_1)
+# 
+# levels(training_data_1$long)
+# levels(test_data_1$long)
+
+
+# 
+# ########### tried to make grade in test and training data have the same levels, this time by dropping observations. Still gives us an error :(
+# training_data_2<-training_data_1
+# test_data_2<-test_data_1
+# 
+# table(training_data_2$grade)
+# table(test_data_2$grade)
+# 
+# training_data_2<-subset(training_data_2, grade!=3)
+# test_data_2<-subset(test_data_2, grade!=1)
+# 
+# training_data_2$grade<-factor(training_data_2$grade)
+# test_data_2$grade<-factor(test_data_2$grade)
+# #############These are the 4 models we deal with for now. May add more later if time permits
+# 
+# table(training_data_2$grade)
+# table(test_data_2$grade)
+# 
+# summary(lm.model5)
+# 
+# lm.model5<-lm(log_price~log_sqft_living + grade + condition + bedrooms + bathrooms + waterfront + log_sqft_lot + sqft_above + sqft_basement + floors + sqft_living15+ view + zipcode + poly(lat,13) + poly(long,17), data = training_data_2)
+# 
+# 
+# performance(lm.model5, test_data_2)
+# OLS_RMSE[5]<-performance(lm.model5, test_data_2)
+# OLS_AdjRsquared[4]<-summary(lm.model4)$adj.r.squared
+# 
+# names(training_data_2)==names(test_data_2)
+
+
+#### We stick to the 4 models we have for now and use these predictors for the other methods we will try
+
+```
+
+```{r Regularization}
+# library(glmnet)
+# ##creating a sequence corresponding to the different values that lambda can take
+# grid<-seq(0:2000)
+# 
+# load("training_sc.Rda")
+# load("test_sc.Rda")
+# 
+# 
+# ytrain<-as.matrix(price_training_data)
+# ytest<-as.matrix(price_test_data)
+# Xtraining<-as.matrix(training_sc)
+# Xtest<-as.matrix(test_sc)
+# 
+# ###fitting the ridge model - replicating model 1, the full model
+# ridge.model1<-glmnet(Xtraining,ytrain,alpha=0, lambda=grid, standardize = FALSE)
+# #ridge.pred=predict(ridge.model1,s=0,newx=Xtest)
+# #sqrt(mean((ridge.pred-ytest)^2))
+# 
+
+```

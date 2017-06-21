@@ -1,0 +1,1652 @@
+---
+title: "R Notebook"
+output:
+  html_document: default
+  html_notebook: default
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Cmd+Option+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Cmd+Shift+K* to preview the HTML file).
+
+
+```{r}
+rm(list=ls())
+setwd("/Users/DaanishRaj/Daanish_ALL/Aug 19 2014/Columbia 2014-16/Spring 2017/Thesis/Analyses/v1/ComparingModels/Other")
+getwd()
+
+load("price_training_data.Rda")
+load("price_test_data.Rda")
+
+
+```
+```{r - Model 1}
+Dtrees_RMSE<-rep(NA,4)
+
+set.seed(123)
+library(tree)
+
+Xtrain1<-read.csv("model1_training.csv")
+Xtest1<-read.csv("model1_test.csv")
+
+#### we add price since we need dependent variable in the same data set 
+Xtrain1$price<-(price_training_data/1000)
+Xtest1$price<-(price_test_data/1000)
+
+# ###correcting a mistake from earlier
+# Xtrain1$age_renov<-ifelse(Xtrain1$age_renov==2017,0,Xtrain1$age_renov)
+# Xtest1$age_renov<-ifelse(Xtest1$age_renov==2017,0,Xtest1$age_renov)
+
+
+class(Xtrain1$price)
+mode(Xtrain1$price)
+Xtrain1$price<-unlist(Xtrain1$price)
+Xtrain1$price<-as.numeric(Xtrain1$price)
+
+Xtest1$price<-unlist(Xtest1$price)
+Xtest1$price<-as.numeric(Xtest1$price)
+
+
+Xtrain1$log_price<-log(Xtrain1$price)
+Xtest1$log_price<-log(Xtest1$price)
+
+Xtrain1$price<-NULL
+Xtest1$price<-NULL
+
+ 
+tree.model1=tree(log_price~.,Xtrain1)
+#tree.model1=tree(price~.,Xtrain1)
+summary(tree.model1)
+
+plot(tree.model1)
+text(tree.model1, pretty=0)
+
+
+cv.model1<-cv.tree(tree.model1)
+cv.model1
+
+
+
+####Best tree size
+plot(cv.model1$size, cv.model1$dev, type='b', xlab="size (# leaves)", ylab="deviance", main="Best Tree Size")
+
+prune.model1<-prune.tree(tree.model1, best=10)
+prune.model1
+plot(prune.model1, main="Pruned tree with 10 leaves")
+text(prune.model1, pretty=0)
+
+pred_log_price<-predict(tree.model1, Xtest1)
+#pred_price<-predict(tree.model1, Xtest1)
+
+plot(pred_log_price, Xtest1$log_price, xlab="Predicted Price", ylab="Actual Price", main= 'Prediction Performance')
+abline(0,1)
+
+#mean(pred_price)
+mean(pred_log_price)
+
+
+pred_price<-exp(pred_log_price)
+price<-exp(Xtest1$log_price)
+
+mse<-mean((pred_price-price)^2)
+rmse<-sqrt(mse)
+
+mse
+rmse
+
+Dtrees_RMSE[1]<-rmse
+Dtrees_RMSE
+
+
+##############Now try bagging
+library(randomForest)
+Bagging_RMSE<-rep(NA,4)
+
+
+
+bag.model1<-randomForest(log_price~., data=Xtrain1, mtry=18, importance=TRUE)
+
+bag.model1
+
+pred_log_price<-predict(bag.model1, Xtest1)
+
+plot(pred_log_price,Xtest1$log_price, xlab="Predicted Price", ylab="Actual Price", main="Prediction Performance")
+abline (0 ,1)
+
+#mean(test_data$price)
+pred_price<-exp(pred_log_price)
+price<-exp(Xtest1$log_price)
+mse<-mean((pred_price-price)^2)
+rmse<-sqrt(mse)
+
+mse
+rmse
+
+Bagging_RMSE[1]<-rmse
+Bagging_RMSE
+
+
+######Now try random forest
+RF_RMSE<-rep(NA,4)
+
+set.seed (123)
+y<-Xtrain1$log_price
+x<-Xtrain1
+x$log_price<-NULL
+
+optimalmtry<-tuneRF(x, y, stepFactor=2, ntreeTry = 501, improve=0.1, trace=TRUE, plot=TRUE, doBest=TRUE)
+
+optimalmtry$mtry
+
+rf.model1<-randomForest(log_price~.,data=Xtrain1, mtry=optimalmtry$mtry)
+
+
+#rf.model1<-randomForest(log_price~.,data=Xtrain1)
+
+rf.model1
+pred_log_price<-predict(rf.model1, newdata = Xtest1)
+
+plot(pred_log_price,Xtest1$log_price, xlab="Predicted Price", ylab="Actual Price", main="Prediction Performance")
+abline (0 ,1)
+
+
+pred_price<-exp(pred_log_price)
+price<-exp(Xtest1$log_price)
+mse<-mean((pred_price-price)^2)
+rmse<-sqrt(mse)
+
+mse
+rmse
+
+RF_RMSE[1]<-rmse
+RF_RMSE
+
+
+# importance (rf.model1)
+# varImpPlot (rf.model1, xlab="Total Decrease in Node Purity", main="Variable Importance - Model 1")
+# 
+# varImpPlot (rf.model1)
+# title(xlab="Total Decrease in Node Purity", main="Variable Importance - Model 1")
+
+importance (rf.model1)
+varImpPlot (rf.model1, n.var=10, main= "Model 1  - Variable Importance")
+
+
+#####Now do Boosting
+Boosting_RMSE<-rep(NA,4)
+library(gbm)
+set.seed(123)
+
+
+boost.model1=gbm(log_price~.,data=Xtrain1,distribution=
+"gaussian",n.trees=5000, interaction.depth=4)
+
+boost.model1
+
+summary(boost.model1)
+
+gbm.perf(boost.model1, plot.it = TRUE, oobag.curve = TRUE, overlay = TRUE)
+
+# par(mfrow=c(1,2)) 
+# plot(boost.model1 ,i="sqft_living") 
+# plot(boost.model1 ,i="grade")
+
+
+####We now fit this model on the test set
+
+
+pred_log_price=predict(boost.model1,newdata=Xtest1, n.trees=5000)
+
+pred_price<-exp(pred_log_price)
+price<-exp(Xtest1$log_price)
+mse<-mean((pred_price-price)^2)
+rmse<-sqrt(mse)
+
+mse
+rmse
+
+Boosting_RMSE[1]<-rmse
+Boosting_RMSE
+
+library(gbm)
+set.seed(123)
+num_trees<-c(100,200,300,400,500,600,800,1000)
+num_depth<-c(2,4,6,8,10)
+
+#Boosting_RMSE_cv<-rep(NA, length(num_trees)*length(num_depth))
+Boosting_RMSE_cv_1<-data.frame(matrix(NA, nrow=length(num_trees), ncol=length(num_depth)))
+  
+for ( i in 1:length(num_trees))
+{
+  trees<-num_trees[i]
+  for (j in 1: length(num_depth))
+  {
+   set.seed(123)
+   
+    depth<-num_depth[j]
+    
+    boost.model1=gbm(log_price~.,data=Xtrain1,distribution=
+  "gaussian",n.trees=trees, interaction.depth=depth, shrinkage = 0.1)
+  
+    #gbm.perf(boost.model1, plot.it = TRUE, oobag.curve = TRUE, overlay = TRUE)
+  
+  ####We now fit this model on the test set
+  pred_log_price=predict(boost.model1,newdata=Xtest1, n.trees=trees)
+  
+  pred_price<-exp(pred_log_price)
+  price<-exp(Xtest1$log_price)
+  mse<-mean((pred_price-price)^2)
+  rmse<-sqrt(mse)
+  
+  mse
+  rmse
+  Boosting_RMSE_cv_1[i,j]<-rmse
+
+  }
+  
+}
+
+
+###plot the best model
+boost.model1=gbm(log_price~.,data=Xtrain1,distribution=
+"gaussian",n.trees=600, interaction.depth=4, shrinkage = 0.1)
+
+boost.model1
+
+a<-summary(boost.model1)
+
+par(mfrow=c(1,2)) 
+plot(boost.model1 ,i="lat") 
+plot(boost.model1 ,i="log_sqft_living")
+
+
+par(mfrow=c(1,2)) 
+plot(boost.model1 ,i="log_sqft_living") 
+plot(boost.model1 ,i="lat")
+
+
+
+
+```
+
+
+```{r Model 1 with scaled data}
+#####we choose not to scale for now. The scaled results were weird
+
+# Xtrain1<-read.csv("model1_training.csv")
+# Xtest1<-read.csv("model1_test.csv")
+# 
+# #### we add price since we need dependent variable in the same data set 
+# Xtrain1$price<-(price_training_data/1000)
+# Xtest1$price<-(price_test_data/1000)
+# 
+# # ###correcting a mistake from earlier
+# # Xtrain1$age_renov<-ifelse(Xtrain1$age_renov==2017,0,Xtrain1$age_renov)
+# # Xtest1$age_renov<-ifelse(Xtest1$age_renov==2017,0,Xtest1$age_renov)
+# 
+# 
+# class(Xtrain1$price)
+# mode(Xtrain1$price)
+# Xtrain1$price<-unlist(Xtrain1$price)
+# Xtrain1$price<-as.numeric(Xtrain1$price)
+# 
+# Xtest1$price<-unlist(Xtest1$price)
+# Xtest1$price<-as.numeric(Xtest1$price)
+# 
+# 
+# Xtrain1$log_price<-log(Xtrain1$price)
+# Xtest1$log_price<-log(Xtest1$price)
+# 
+# Xtrain1$price<-NULL
+# Xtest1$price<-NULL
+# 
+#  
+# 
+# Xtrain1<-data.frame(scale(Xtrain1))
+# Xtest1<-data.frame(scale(Xtest1))
+# #colMeans((Xtest1))
+# 
+# Dtrees_RMSE_sc<-rep(NA,4)
+# 
+# set.seed(123)
+# library(tree)
+# 
+# tree.model1=tree(log_price~.,Xtrain1)
+# #tree.model1=tree(price~.,Xtrain1)
+# summary(tree.model1)
+# 
+# plot(tree.model1)
+# text(tree.model1, pretty=0)
+# 
+# 
+# cv.model1<-cv.tree(tree.model1)
+# cv.model1
+# 
+# ####Best tree size
+# plot(cv.model1$size, cv.model1$dev, type='b', xlab="size (# leaves)", ylab="deviance", main="Best Tree Size")
+# 
+# prune.model1<-prune.tree(tree.model1, best=10)
+# prune.model1
+# plot(prune.model1, main="Pruned tree with 10 leaves")
+# text(prune.model1, pretty=0)
+# 
+# pred_log_price<-predict(tree.model1, Xtest1)
+# #pred_price<-predict(tree.model1, Xtest1)
+# 
+# plot(pred_log_price, Xtest1$log_price, xlab="Predicted Price", ylab="Actual Price", main= 'Prediction Performance')
+# abline(0,1)
+# 
+# #mean(pred_price)
+# mean(pred_log_price)
+# 
+# 
+# pred_price<-exp(pred_log_price)
+# price<-exp(Xtest1$log_price)
+# 
+# mse<-mean((pred_price-price)^2)
+# rmse<-sqrt(mse)
+# 
+# mse
+# rmse
+# 
+# Dtrees_RMSE_sc[1]<-rmse
+# Dtrees_RMSE_sc
+# 
+# 
+# ##############Now try bagging
+# library(randomForest)
+# Bagging_RMSE_sc<-rep(NA,4)
+# 
+# 
+# bag.model1<-randomForest(log_price~., data=Xtrain1, importance=TRUE)
+# 
+# bag.model1
+# 
+# pred_log_price<-predict(bag.model1, Xtest1)
+# 
+# plot(pred_log_price,Xtest1$log_price, xlab="Predicted Price", ylab="Actual Price", main="Prediction Performance")
+# abline (0 ,1)
+# 
+# #mean(test_data$price)
+# pred_price<-exp(pred_log_price)
+# price<-exp(Xtest1$log_price)
+# mse<-mean((pred_price-price)^2)
+# rmse<-sqrt(mse)
+# 
+# mse
+# rmse
+# 
+# Bagging_RMSE_sc[1]<-rmse
+# Bagging_RMSE_sc
+# 
+# 
+# ######Now try random forest
+# RF_RMSE_sc<-rep(NA,4)
+# 
+# set.seed (123)
+# rf.model1<-randomForest(log_price~.,data=Xtrain1)
+# 
+# rf.model1
+# pred_log_price<-predict(rf.model1, newdata = Xtest1)
+# 
+# plot(pred_log_price,Xtest1$log_price, xlab="Predicted Price", ylab="Actual Price", main="Prediction Performance")
+# abline (0 ,1)
+# 
+# 
+# pred_price<-exp(pred_log_price)
+# price<-exp(Xtest1$log_price)
+# mse<-mean((pred_price-price)^2)
+# rmse<-sqrt(mse)
+# 
+# mse
+# rmse
+# 
+# RF_RMSE_sc[1]<-rmse
+# RF_RMSE_sc
+# 
+# 
+# # importance (rf.model1)
+# # varImpPlot (rf.model1, xlab="Total Decrease in Node Purity", main="Variable Importance - Model 1")
+# # 
+# # varImpPlot (rf.model1)
+# # title(xlab="Total Decrease in Node Purity", main="Variable Importance - Model 1")
+# 
+# 
+# #####Now do Boosting
+# Boosting_RMSE_sc<-rep(NA,4)
+# library(gbm)
+# set.seed(123)
+# 
+# 
+# boost.model1=gbm(log_price~.,data=Xtrain1,distribution=
+# "gaussian",n.trees=5000, interaction.depth=4)
+# 
+# boost.model1
+# 
+# summary(boost.model1)
+# 
+# 
+# 
+# # par(mfrow=c(1,2)) 
+# # plot(boost.model1 ,i="sqft_living") 
+# # plot(boost.model1 ,i="grade")
+# 
+# 
+# ####We now fit this model on the test set
+# 
+# 
+# pred_log_price=predict(boost.model1,newdata=Xtest1, n.trees=5000)
+# 
+# pred_price<-exp(pred_log_price)
+# price<-exp(Xtest1$log_price)
+# mse<-mean((pred_price-price)^2)
+# rmse<-sqrt(mse)
+# 
+# mse
+# rmse
+
+#Boosting_RMSE_sc[1]<-rmse
+#Boosting_RMSE_sc
+
+
+
+
+
+```
+
+
+```{r - Model 2}
+set.seed(123)
+library(tree)
+
+Xtrain2<-read.csv("model2_training.csv")
+Xtest2<-read.csv("model2_test.csv")
+
+#### we add price since we need dependent variable in the same data set 
+Xtrain2$price<-(price_training_data/1000)
+Xtest2$price<-(price_test_data/1000)
+
+
+Xtrain2$price<-unlist(Xtrain2$price)
+Xtrain2$price<-as.numeric(Xtrain2$price)
+
+Xtest2$price<-unlist(Xtest2$price)
+Xtest2$price<-as.numeric(Xtest2$price)
+
+
+Xtrain2$log_price<-log(Xtrain2$price)
+Xtest2$log_price<-log(Xtest2$price)
+
+Xtrain2$price<-NULL
+Xtest2$price<-NULL
+
+ 
+tree.model2=tree(log_price~.,Xtrain2)
+#tree.model2=tree(price~.,Xtrain2)
+summary(tree.model2)
+
+plot(tree.model2)
+text(tree.model2, pretty=0)
+
+
+cv.model2<-cv.tree(tree.model2)
+cv.model2
+
+####Best tree size
+plot(cv.model2$size, cv.model2$dev, type='b', xlab="size (# leaves)", ylab="deviance", main="Best Tree Size")
+
+pred_log_price<-predict(tree.model2, Xtest2)
+#pred_price<-predict(tree.model1, Xtest1)
+
+plot(pred_log_price, Xtest2$log_price, xlab="Predicted Price", ylab="Actual Price", main= 'Prediction Performance')
+abline(0,1)
+
+#mean(pred_price)
+mean(pred_log_price)
+
+
+pred_price<-exp(pred_log_price)
+price<-exp(Xtest2$log_price)
+
+mse<-mean((pred_price-price)^2)
+rmse<-sqrt(mse)
+
+mse
+rmse
+
+Dtrees_RMSE[2]<-rmse
+
+
+
+##############################Bagging
+#bag.model2<-randomForest(log_price~., data=Xtrain2, importance=TRUE)
+
+bag.model2<-randomForest(log_price~., data=Xtrain2, mtry=5, importance=TRUE)
+
+
+bag.model2
+
+pred_log_price<-predict(bag.model2, Xtest2)
+
+plot(pred_log_price,Xtest2$log_price, xlab="Predicted Price", ylab="Actual Price", main="Prediction Performance")
+abline (0 ,1)
+
+#mean(test_data$price)
+pred_price<-exp(pred_log_price)
+price<-exp(Xtest2$log_price)
+mse<-mean((pred_price-price)^2)
+rmse<-sqrt(mse)
+
+mse
+rmse
+
+Bagging_RMSE[2]<-rmse
+
+
+######Now try random forest
+
+set.seed (123)
+
+y<-Xtrain2$log_price
+x<-Xtrain2
+x$log_price<-NULL
+
+optimalmtry<-tuneRF(x, y, stepFactor=2, ntreeTry = 501, improve=0.1, trace=TRUE, plot=TRUE, doBest=TRUE)
+
+optimalmtry$mtry
+
+rf.model2<-randomForest(log_price~.,data=Xtrain2, mtry=optimalmtry$mtry)
+
+#rf.model2<-randomForest(log_price~.,data=Xtrain2)
+
+
+
+rf.model2
+pred_log_price<-predict(rf.model2, newdata = Xtest2)
+
+plot(pred_log_price,Xtest2$log_price, xlab="Predicted Price", ylab="Actual Price", main="Prediction Performance")
+abline (0 ,1)
+
+
+pred_price<-exp(pred_log_price)
+price<-exp(Xtest2$log_price)
+mse<-mean((pred_price-price)^2)
+rmse<-sqrt(mse)
+
+mse
+rmse
+
+RF_RMSE[2]<-rmse
+
+importance (rf.model2)
+varImpPlot (rf.model2, n.var=5, main= "Model 2  - Variable Importance")
+
+
+# importance (rf.model1)
+# varImpPlot (rf.model1, xlab="Total Decrease in Node Purity", main="Variable Importance - Model 1")
+# 
+# varImpPlot (rf.model1)
+# title(xlab="Total Decrease in Node Purity", main="Variable Importance - Model 1")
+
+
+#####Now do Boosting
+set.seed(123)
+
+
+boost.model2=gbm(log_price~.,data=Xtrain2,distribution=
+"gaussian",n.trees=5000, interaction.depth=4)
+
+boost.model2
+
+a<-summary(boost.model2)
+a
+
+
+####We now fit this model on the test set
+pred_log_price=predict(boost.model2,newdata=Xtest2, n.trees=5000)
+
+pred_price<-exp(pred_log_price)
+price<-exp(Xtest2$log_price)
+mse<-mean((pred_price-price)^2)
+rmse<-sqrt(mse)
+
+mse
+rmse
+
+Boosting_RMSE[2]<-rmse
+
+library(gbm)
+num_trees<-c(100,200,300,400,500,600,800,1000)
+num_depth<-c(2,4,6,8,10)
+
+#Boosting_RMSE_cv<-rep(NA, length(num_trees)*length(num_depth))
+Boosting_RMSE_cv_2<-data.frame(matrix(NA, nrow=length(num_trees), ncol=length(num_depth)))
+  
+for ( i in 1:length(num_trees))
+{
+  trees<-num_trees[i]
+  for (j in 1: length(num_depth))
+  {
+   set.seed(123)
+   
+    depth<-num_depth[j]
+    
+    boost.model2=gbm(log_price~.,data=Xtrain2,distribution=
+  "gaussian",n.trees=trees, interaction.depth=depth, shrinkage = 0.1)
+  
+   # gbm.perf(boost.model2, plot.it = TRUE, oobag.curve = TRUE, overlay = TRUE)
+  
+  ####We now fit this model on the test set
+  pred_log_price=predict(boost.model2,newdata=Xtest2, n.trees=trees)
+  
+  pred_price<-exp(pred_log_price)
+  price<-exp(Xtest2$log_price)
+  mse<-mean((pred_price-price)^2)
+  rmse<-sqrt(mse)
+  
+  mse
+  rmse
+  Boosting_RMSE_cv_2[i,j]<-rmse
+
+  }
+  
+}
+
+###plot the best model
+boost.model2=gbm(log_price~.,data=Xtrain2,distribution=
+"gaussian",n.trees=100, interaction.depth=6, shrinkage = 0.1)
+
+boost.model2
+
+summary(boost.model2)
+
+par(mfrow=c(1,2)) 
+plot(boost.model1 ,i="log_sqft_living") 
+plot(boost.model1 ,i="grade")
+
+
+par(mfrow=c(1,2)) 
+plot(boost.model1 ,i="log_sqft_living") 
+plot(boost.model1 ,i="lat")
+
+
+
+```
+
+```{r Model 3}
+set.seed(123)
+
+
+Xtrain3<-read.csv("model3_training.csv")
+Xtest3<-read.csv("model3_test.csv")
+
+#### we add price since we need dependent variable in the same data set 
+Xtrain3$price<-(price_training_data/1000)
+Xtest3$price<-(price_test_data/1000)
+
+
+Xtrain3$price<-unlist(Xtrain3$price)
+Xtrain3$price<-as.numeric(Xtrain3$price)
+
+Xtest3$price<-unlist(Xtest3$price)
+Xtest3$price<-as.numeric(Xtest3$price)
+
+
+Xtrain3$log_price<-log(Xtrain3$price)
+Xtest3$log_price<-log(Xtest3$price)
+
+Xtrain3$price<-NULL
+Xtest3$price<-NULL
+
+tree.model3=tree(log_price~.,Xtrain3)
+#tree.model3=tree(price~.,Xtrain3)
+summary(tree.model3)
+
+plot(tree.model3)
+text(tree.model3, pretty=0)
+
+
+cv.model3<-cv.tree(tree.model3)
+cv.model3
+
+####Best tree size
+plot(cv.model3$size, cv.model3$dev, type='b', xlab="size (# leaves)", ylab="deviance", main="Best Tree Size")
+
+pred_log_price<-predict(tree.model3, Xtest3)
+#pred_price<-predict(tree.model1, Xtest1)
+
+plot(pred_log_price, Xtest3$log_price, xlab="Predicted Price", ylab="Actual Price", main= 'Prediction Performance')
+abline(0,1)
+
+#mean(pred_price)
+mean(pred_log_price)
+
+
+pred_price<-exp(pred_log_price)
+price<-exp(Xtest3$log_price)
+
+mse<-mean((pred_price-price)^2)
+rmse<-sqrt(mse)
+
+mse
+rmse
+
+Dtrees_RMSE[3]<-rmse
+
+
+##############################Bagging
+#bag.model3<-randomForest(log_price~., data=Xtrain3, importance=TRUE)
+
+bag.model3<-randomForest(log_price~., data=Xtrain3, mtry=83, importance=TRUE)
+
+bag.model3
+
+pred_log_price<-predict(bag.model3, Xtest3)
+
+plot(pred_log_price,Xtest3$log_price, xlab="Predicted Price", ylab="Actual Price", main="Prediction Performance")
+abline (0 ,1)
+
+#mean(test_data$price)
+pred_price<-exp(pred_log_price)
+price<-exp(Xtest3$log_price)
+mse<-mean((pred_price-price)^2)
+rmse<-sqrt(mse)
+
+mse
+rmse
+
+Bagging_RMSE[3]<-rmse
+
+
+######Now try random forest
+
+set.seed (123)
+y<-Xtrain3$log_price
+x<-Xtrain3
+x$log_price<-NULL
+
+optimalmtry<-tuneRF(x, y, stepFactor=2, ntreeTry = 501, improve=0.1, trace=TRUE, plot=TRUE, doBest=TRUE)
+
+optimalmtry$mtry
+
+
+#rf.model3<-randomForest(log_price~.,data=Xtrain3)
+
+rf.model3<-randomForest(log_price~.,mtry=optimalmtry$mtry, data=Xtrain3)
+
+rf.model3
+pred_log_price<-predict(rf.model3, newdata = Xtest3)
+
+plot(pred_log_price,Xtest3$log_price, xlab="Predicted Price", ylab="Actual Price", main="Prediction Performance")
+abline (0 ,1)
+
+
+pred_price<-exp(pred_log_price)
+price<-exp(Xtest3$log_price)
+mse<-mean((pred_price-price)^2)
+rmse<-sqrt(mse)
+
+mse
+rmse
+
+RF_RMSE[3]<-rmse
+
+
+
+# importance (rf.model1)
+# varImpPlot (rf.model1, xlab="Total Decrease in Node Purity", main="Variable Importance - Model 1")
+# 
+# varImpPlot (rf.model1)
+# title(xlab="Total Decrease in Node Purity", main="Variable Importance - Model 1")
+
+importance (rf.model3)
+varImpPlot (rf.model3, n.var=10, main= "Model 3  - Variable Importance")
+
+
+#####Now do Boosting
+set.seed(123)
+
+
+boost.model3=gbm(log_price~.,data=Xtrain3,distribution=
+"gaussian",n.trees=5000, interaction.depth=4)
+
+boost.model3
+###note the number of predictors having non-zero influence
+
+summary(boost.model3)
+
+
+####We now fit this model on the test set
+pred_log_price=predict(boost.model3,newdata=Xtest3, n.trees=5000)
+
+pred_price<-exp(pred_log_price)
+price<-exp(Xtest3$log_price)
+mse<-mean((pred_price-price)^2)
+rmse<-sqrt(mse)
+
+mse
+rmse
+
+Boosting_RMSE[3]<-rmse
+
+
+library(gbm)
+num_trees<-c(100,200,300,400,500,600,800,1000)
+num_depth<-c(2,4,6,8,10)
+
+#Boosting_RMSE_cv<-rep(NA, length(num_trees)*length(num_depth))
+Boosting_RMSE_cv_3 <-data.frame(matrix(NA, nrow=length(num_trees), ncol=length(num_depth)))
+  
+for ( i in 1:length(num_trees))
+{
+  trees<-num_trees[i]
+  for (j in 1: length(num_depth))
+  {
+   set.seed(123)
+   
+    depth<-num_depth[j]
+    
+    boost.model3=gbm(log_price~.,data=Xtrain3,distribution=
+  "gaussian",n.trees=trees, interaction.depth=depth, shrinkage = 0.1)
+  
+    #gbm.perf(boost.model3, plot.it = TRUE, oobag.curve = TRUE, overlay = TRUE)
+  
+  ####We now fit this model on the test set
+  pred_log_price=predict(boost.model3,newdata=Xtest3, n.trees=trees)
+  
+  pred_price<-exp(pred_log_price)
+  price<-exp(Xtest3$log_price)
+  mse<-mean((pred_price-price)^2)
+  rmse<-sqrt(mse)
+  
+  mse
+  rmse
+  Boosting_RMSE_cv_3[i,j]<-rmse
+
+  }
+  
+}
+
+###plot the best model
+boost.model3=gbm(log_price~.,data=Xtrain3,distribution=
+"gaussian",n.trees=600, interaction.depth=10, shrinkage = 0.1)
+
+boost.model3
+
+a<-summary(boost.model3)
+
+par(mfrow=c(1,2)) 
+plot(boost.model3 ,i="lat") 
+plot(boost.model3 ,i="log_sqft_living")
+
+
+
+
+
+#getwd()
+#save.image(file ="latest.RData")
+
+```
+
+```{r Model 4}
+library(gbm)
+
+set.seed(1156)
+
+
+Xtrain4<-read.csv("model4_training.csv")
+Xtest4<-read.csv("model4_test.csv")
+
+#### we add price since we need dependent variable in the same data set 
+Xtrain4$price<-(price_training_data/1000)
+Xtest4$price<-(price_test_data/1000)
+
+
+Xtrain4$price<-unlist(Xtrain4$price)
+Xtrain4$price<-as.numeric(Xtrain4$price)
+
+Xtest4$price<-unlist(Xtest4$price)
+Xtest4$price<-as.numeric(Xtest4$price)
+
+
+Xtrain4$log_price<-log(Xtrain4$price)
+Xtest4$log_price<-log(Xtest4$price)
+
+Xtrain4$price<-NULL
+Xtest4$price<-NULL
+
+tree.model4=tree(log_price~.,Xtrain4)
+#tree.model3=tree(price~.,Xtrain3)
+summary(tree.model4)
+
+plot(tree.model4)
+text(tree.model4, pretty=0)
+
+
+
+cv.model4<-cv.tree(tree.model4)
+cv.model4
+
+####Best tree size
+plot(cv.model4$size, cv.model4$dev, type='b', xlab="size (# leaves)", ylab="deviance", main="Best Tree Size")
+
+pred_log_price<-predict(tree.model4, Xtest4)
+#pred_price<-predict(tree.model1, Xtest1)
+
+plot(pred_log_price, Xtest4$log_price, xlab="Predicted Price", ylab="Actual Price", main= 'Prediction Performance')
+abline(0,1)
+
+#mean(pred_price)
+mean(pred_log_price)
+
+
+pred_price<-exp(pred_log_price)
+price<-exp(Xtest4$log_price)
+
+mse<-mean((pred_price-price)^2)
+rmse<-sqrt(mse)
+
+mse
+rmse
+
+Dtrees_RMSE[4]<-rmse
+
+
+##############################Bagging
+bag.model4<-randomForest(log_price~., data=Xtrain4, importance=TRUE)
+
+bag.model4
+
+pred_log_price<-predict(bag.model4, Xtest4)
+
+plot(pred_log_price,Xtest4$log_price, xlab="Predicted Price", ylab="Actual Price", main="Prediction Performance")
+abline (0 ,1)
+
+#mean(test_data$price)
+pred_price<-exp(pred_log_price)
+price<-exp(Xtest4$log_price)
+mse<-mean((pred_price-price)^2)
+rmse<-sqrt(mse)
+
+mse
+rmse
+
+Bagging_RMSE[4]<-rmse
+
+
+######Now try random forest
+
+set.seed (123)
+
+y<-Xtrain4$log_price
+x<-Xtrain4
+x$log_price<-NULL
+
+optimalmtry<-tuneRF(x, y, stepFactor=2, ntreeTry = 501, improve=0.1, trace=TRUE, plot=TRUE, doBest=TRUE)
+
+optimalmtry$mtry
+
+rf.model4<-randomForest(log_price~.,data=Xtrain4, mtry=optimalmtry$mtry)
+
+
+#rf.model4<-randomForest(log_price~.,data=Xtrain4)
+
+rf.model4
+pred_log_price<-predict(rf.model4, newdata = Xtest4)
+
+plot(pred_log_price,Xtest4$log_price, xlab="Predicted Price", ylab="Actual Price", main="Prediction Performance")
+abline (0 ,1)
+
+
+pred_price<-exp(pred_log_price)
+price<-exp(Xtest4$log_price)
+mse<-mean((pred_price-price)^2)
+rmse<-sqrt(mse)
+
+mse
+rmse
+
+RF_RMSE[4]<-rmse
+
+
+
+#varImpPlot (rf.model4, xlab="Total Decrease in Node Purity", main="Variable Importance - Model 4")
+# 
+#title(xlab="Total Decrease in Node Purity", main="Variable Importance - Model 4")
+importance (rf.model4)
+varImpPlot (rf.model4, n.var=10, main= "Model 4  - Variable Importance")
+
+
+#####Now do Boosting
+set.seed(123)
+
+
+boost.model4=gbm(log_price~.,data=Xtrain4,distribution=
+"gaussian",n.trees=5000, interaction.depth=4)
+
+boost.model4
+###note the number of predictors having non-zero influence
+
+summary(boost.model4)
+
+gbm.perf(boost.model4, plot.it = TRUE, oobag.curve = TRUE, overlay = TRUE)
+####We now fit this model on the test set
+
+
+pred_price<-exp(pred_log_price)
+price<-exp(Xtest4$log_price)
+mse<-mean((pred_price-price)^2)
+rmse<-sqrt(mse)
+
+mse
+rmse
+
+Boosting_RMSE[4]<-rmse
+
+
+###What if we grew only 500 trees?
+
+library(gbm)
+num_trees<-c(100,200,300,400,500,600,800,1000)
+num_depth<-c(2,4,6,8,10)
+
+#Boosting_RMSE_cv<-rep(NA, length(num_trees)*length(num_depth))
+Boosting_RMSE_cv_4<-data.frame(matrix(NA, nrow=length(num_trees), ncol=length(num_depth)))
+  
+for ( i in 1:length(num_trees))
+{
+  trees<-num_trees[i]
+  for (j in 1: length(num_depth))
+  {
+   set.seed(123)
+   
+    depth<-num_depth[j]
+    
+    boost.model4=gbm(log_price~.,data=Xtrain4,distribution=
+  "gaussian",n.trees=trees, interaction.depth=depth, shrinkage = 0.1)
+  
+    #gbm.perf(boost.model4, plot.it = TRUE, oobag.curve = TRUE, overlay = TRUE)
+  
+  ####We now fit this model on the test set
+  pred_log_price=predict(boost.model4,newdata=Xtest4, n.trees=trees)
+  
+  pred_price<-exp(pred_log_price)
+  price<-exp(Xtest4$log_price)
+  mse<-mean((pred_price-price)^2)
+  rmse<-sqrt(mse)
+  
+  mse
+  rmse
+  Boosting_RMSE_cv_4[i,j]<-rmse
+
+  }
+  
+}
+
+
+###plot the best model
+boost.model4=gbm(log_price~.,data=Xtrain4,distribution=
+"gaussian",n.trees=700, interaction.depth=10, shrinkage = 0.1)
+
+boost.model4
+
+a<-summary(boost.model4)
+a
+
+par(mfrow=c(1,2)) 
+plot(boost.model4 ,i="lat1") 
+plot(boost.model4 ,i="log_sqft_living")
+
+
+
+
+```
+
+```{r Model 5}
+set.seed(123)
+
+
+Xtrain5<-read.csv("model5_training.csv")
+Xtest5<-read.csv("model5_test.csv")
+
+#### we add price since we need dependent variable in the same data set 
+Xtrain5$price<-(price_training_data/1000)
+Xtest5$price<-(price_test_data/1000)
+
+
+Xtrain5$price<-unlist(Xtrain5$price)
+Xtrain5$price<-as.numeric(Xtrain5$price)
+
+Xtest5$price<-unlist(Xtest5$price)
+Xtest5$price<-as.numeric(Xtest5$price)
+
+
+Xtrain5$log_price<-log(Xtrain5$price)
+Xtest5$log_price<-log(Xtest5$price)
+
+Xtrain5$price<-NULL
+Xtest5$price<-NULL
+
+tree.model5=tree(log_price~.,Xtrain5)
+#tree.model3=tree(price~.,Xtrain3)
+summary(tree.model5)
+
+plot(tree.model5)
+text(tree.model5, pretty=0)
+
+
+cv.model5<-cv.tree(tree.model5)
+cv.model5
+
+####Best tree size
+plot(cv.model5$size, cv.model5$dev, type='b', xlab="size (# leaves)", ylab="deviance", main="Best Tree Size")
+
+pred_log_price<-predict(tree.model5, Xtest5)
+#pred_price<-predict(tree.model1, Xtest1)
+
+plot(pred_log_price, Xtest5$log_price, xlab="Predicted Price", ylab="Actual Price", main= 'Prediction Performance')
+abline(0,1)
+
+#mean(pred_price)
+mean(pred_log_price)
+
+
+pred_price<-exp(pred_log_price)
+price<-exp(Xtest5$log_price)
+
+mse<-mean((pred_price-price)^2)
+rmse<-sqrt(mse)
+
+mse
+rmse
+
+Dtrees_RMSE[5]<-rmse
+
+
+##############################Bagging
+bag.model5<-randomForest(log_price~., data=Xtrain5, importance=TRUE)
+
+bag.model5
+
+pred_log_price<-predict(bag.model5, Xtest5)
+
+plot(pred_log_price,Xtest5$log_price, xlab="Predicted Price", ylab="Actual Price", main="Prediction Performance")
+abline (0 ,1)
+
+#mean(test_data$price)
+pred_price<-exp(pred_log_price)
+price<-exp(Xtest5$log_price)
+mse<-mean((pred_price-price)^2)
+rmse<-sqrt(mse)
+
+mse
+rmse
+
+Bagging_RMSE[5]<-rmse
+
+
+######Now try random forest
+
+set.seed (123)
+
+y<-Xtrain5$log_price
+x<-Xtrain5
+x$log_price<-NULL
+
+optimalmtry<-tuneRF(x, y, stepFactor=2, ntreeTry = 501, improve=0.05, trace=TRUE, plot=TRUE, doBest=TRUE)
+
+optimalmtry$mtry
+
+rf.model5<-randomForest(log_price~.,data=Xtrain5, mtry=optimalmtry$mtry)
+
+
+#rf.model5<-randomForest(log_price~.,data=Xtrain5)
+
+rf.model5
+pred_log_price<-predict(rf.model5, newdata = Xtest5)
+
+plot(pred_log_price,Xtest5$log_price, xlab="Predicted Price", ylab="Actual Price", main="Prediction Performance")
+abline (0 ,1)
+
+
+pred_price<-exp(pred_log_price)
+price<-exp(Xtest5$log_price)
+mse<-mean((pred_price-price)^2)
+rmse<-sqrt(mse)
+
+mse
+rmse
+
+RF_RMSE[5]<-rmse
+
+
+# importance (rf.model1)
+# varImpPlot (rf.model1, xlab="Total Decrease in Node Purity", main="Variable Importance - Model 1")
+# 
+# varImpPlot (rf.model1)
+# title(xlab="Total Decrease in Node Purity", main="Variable Importance - Model 1")
+
+importance (rf.model5)
+varImpPlot (rf.model5, n.var=10, main= "Model 5  - Variable Importance")
+
+
+#####Now do Boosting
+set.seed(123)
+
+
+boost.model5=gbm(log_price~.,data=Xtrain5,distribution=
+"gaussian",n.trees=5000, interaction.depth=4)
+
+boost.model5
+###note the number of predictors having non-zero influence
+
+summary(boost.model5)
+
+
+####We now fit this model on the test set
+pred_log_price=predict(boost.model5,newdata=Xtest5, n.trees=5000)
+
+pred_price<-exp(pred_log_price)
+price<-exp(Xtest5$log_price)
+mse<-mean((pred_price-price)^2)
+rmse<-sqrt(mse)
+
+mse
+rmse
+
+Boosting_RMSE[5]<-rmse
+
+library(gbm)
+num_trees<-c(100,200,300,400,500,600,800,1000)
+num_depth<-c(2,4,6,8,10)
+
+#Boosting_RMSE_cv<-rep(NA, length(num_trees)*length(num_depth))
+Boosting_RMSE_cv_5 <-data.frame(matrix(NA, nrow=length(num_trees), ncol=length(num_depth)))
+  
+for ( i in 1:length(num_trees))
+{
+  trees<-num_trees[i]
+  for (j in 1: length(num_depth))
+  {
+   set.seed(123)
+   
+    depth<-num_depth[j]
+    
+    boost.model5=gbm(log_price~.,data=Xtrain5,distribution=
+  "gaussian",n.trees=trees, interaction.depth=depth, shrinkage = 0.1)
+  
+    #gbm.perf(boost.model5, plot.it = TRUE, oobag.curve = TRUE, overlay = TRUE)
+  
+  ####We now fit this model on the test set
+  pred_log_price=predict(boost.model5,newdata=Xtest5, n.trees=trees)
+  
+  pred_price<-exp(pred_log_price)
+  price<-exp(Xtest5$log_price)
+  mse<-mean((pred_price-price)^2)
+  rmse<-sqrt(mse)
+  
+  mse
+  rmse
+  Boosting_RMSE_cv_5[i,j]<-rmse
+
+  }
+  
+}
+
+###plotting the best model
+boost.model5=gbm(log_price~.,data=Xtrain5,distribution=
+"gaussian",n.trees=700, interaction.depth=10, shrinkage = 0.1)
+
+boost.model5
+
+a<-summary(boost.model5)
+a
+
+par(mfrow=c(1,2)) 
+plot(boost.model5 ,i="lat1") 
+plot(boost.model5 ,i="log_sqft_living")
+
+
+```
+
+
+
+```{r Printing out all the values}
+
+
+
+#min(Boosting_RMSE_cv_4)
+
+
+####print results
+Best_Boosting_RMSE_cv<-rep(NA,5)
+Best_Boosting_RMSE_cv[1]<-min(Boosting_RMSE_cv_1)
+Best_Boosting_RMSE_cv[2]<-min(Boosting_RMSE_cv_2)
+Best_Boosting_RMSE_cv[3]<-min(Boosting_RMSE_cv_3)
+Best_Boosting_RMSE_cv[4]<-min(Boosting_RMSE_cv_4)
+Best_Boosting_RMSE_cv[5]<-min(Boosting_RMSE_cv_5)
+
+Dtrees_RMSE
+Bagging_RMSE
+RF_RMSE
+Boosting_RMSE
+
+Best_Boosting_RMSE_cv
+
+#(Boosting_RMSE_cv_1)
+### the min is achieved with trees =600 and depth=4
+  
+#which.min(Boosting_RMSE_cv_2)
+### the min is achieved when the tree is with trees =100 and depth=6
+
+#which.min(Boosting_RMSE_cv_3)
+### the min is achieved when the tree is with trees =600 and depth=10
+
+#which.min(Boosting_RMSE_cv_4)
+### the min is achieved when the tree is with trees =400 and depth=10
+
+
+
+# boost.model4=gbm(log_price~.,data=Xtrain4,distribution=
+# "gaussian",n.trees=500, interaction.depth=8, shrinkage = 0.1)
+# 
+# gbm.perf(boost.model4, plot.it = TRUE, oobag.curve = TRUE, overlay = TRUE, method="OOB")
+# 
+# gbm.perf(boost.model4, plot.it = TRUE, oobag.curve = TRUE, overlay = TRUE)
+# 
+# 
+# boost.model4
+# ###note the number of predictors having non-zero influence
+# 
+# summary(boost.model4)
+# 
+# 
+# ####We now fit this model on the test set
+# pred_log_price=predict(boost.model4,newdata=Xtest4, n.trees=500)
+# 
+# pred_price<-exp(pred_log_price)
+# price<-exp(Xtest4$log_price)
+# mse<-mean((pred_price-price)^2)
+# rmse<-sqrt(mse)
+# 
+# mse
+# rmse
+##500 trees - 324.33  - much worse
+##10000 trees -138.7555 - much superior performance
+###15000 trees - 133.1691
+###500 trees and shrinkage = 0.01 - 160.7175
+###500 trees and shrinkage = 0.1 - 130.1606
+###300 trees and shrinkage = 0.1 - 129.2093
+###400 trees and shrinkage = 0.1 - 130.5063
+###500 trees and shrinkage = 0.1 - 127.1877
+
+###hold shrinkage constant at 0.1
+
+###125 trees, idepth=6 - 132.6179
+###500 , idepth = 8 - 129.7314
+
+
+#gbm.perf(boost.model4, plot.it = TRUE, oobag.curve = TRUE, overlay = TRUE, method="OOB")
+
+
+#####lets try caret
+# install.packages("caret")
+# library(caret)
+# 
+# bootControl <- trainControl(number = 200)
+# 
+# gbmGrid<-expand.grid(interaction.depth = (1:3)*2, n.trees = (5:10)*25, shrinkage=.1, n.minobsinnode = 10)
+# set.seed(123)
+# 
+# ytrain<-Xtrain4$log_price
+# Xtrain4$log_price<-NULL
+# 
+# gbmFit <- train(Xtrain4, ytrain,
+# method = "gbm", trControl = bootControl, verbose = FALSE,
+# bag.fraction = 1, tuneGrid = gbmGrid)
+# 
+# ###Now we re do boosting with various values of lambda (the shrinkage parameter, and pick the best one)
+# 
+# 
+# 
+# 
+# lambda<-seq(0.1,2,by=0.15)
+# length(lambda)
+# RMSE_Boost_M4_shrink<-rep(NA, length(lambda))
+# ####lets start with Model 4
+# set.seed(123)
+# 
+# for (i in 1:length(lambda))
+# {
+#   boost.model4=gbm(log_price~.,data=Xtrain4,distribution=
+#   "gaussian",n.trees=5000, interaction.depth=4, shrinkage =     lambda[i])
+#   
+#   boost.model4
+#   ###note the number of predictors having non-zero influence
+#   
+#   summary(boost.model4)
+#   
+#   
+#   ####We now fit this model on the test set
+#   pred_log_price=predict(boost.model4,newdata=Xtest4, n.trees=5000)
+#   
+#   pred_price<-exp(pred_log_price)
+#   price<-exp(Xtest4$log_price)
+#   mse<-mean((pred_price-price)^2)
+#   rmse<-sqrt(mse)
+#   
+#   mse
+#   rmse
+# 
+# 
+# }
+# 
+
+```
+```{r Which is the best model?}
+
+###1. Make a graph of boosting  - RMSE vs number of trees. run this in a for loop at night
+
+
+###Boost model 1  - shrinkage - 0.1, depth = 4, num_trees = 600
+###Boost model 3 -  shrinkage - 0.1, depth = 10, num_trees = 600
+###Boost model 3 -  shrinkage - 0.1, depth = 10, num_trees = 400
+
+####2. Boost each of these trees 20 times with different seeds and note which one results in a lower mean RMSE. Can also construct a confidence interval
+
+
+###Boost model 1  - shrinkage - 0.1, depth = 4, num_trees = 600
+Boosting_RMSE_model1_sel<-c()
+for (j in 1:20)
+{
+  print(j)
+  set.seed(runif(1,100,999))
+  boost.model=gbm(log_price~.,data=Xtrain1,distribution=
+  "gaussian",n.trees=600, interaction.depth=4, shrinkage = 0.1)
+  
+  #summary(boost.model1)
+  
+  pred_log_price=predict(boost.model,newdata=Xtest1, n.trees=600)
+
+  pred_price<-exp(pred_log_price)
+  price<-exp(Xtest1$log_price)
+  mse<-mean((pred_price-price)^2)
+  rmse<-sqrt(mse)
+  
+  mse
+  rmse
+  
+  Boosting_RMSE_model1_sel[j]<-rmse
+  
+}
+
+
+Boosting_RMSE_model3_sel<-c()
+for (j in 1:20)
+{
+  print(j)
+  set.seed(runif(1,100,999))
+  boost.model=gbm(log_price~.,data=Xtrain3,distribution=
+  "gaussian",n.trees=600, interaction.depth=10, shrinkage = 0.1)
+  
+  #summary(boost.model1)
+  
+  pred_log_price=predict(boost.model,newdata=Xtest3, n.trees=600)
+
+  pred_price<-exp(pred_log_price)
+  price<-exp(Xtest3$log_price)
+  mse<-mean((pred_price-price)^2)
+  rmse<-sqrt(mse)
+  
+  mse
+  rmse
+  
+  Boosting_RMSE_model3_sel[j]<-rmse
+  
+}
+
+
+Boosting_RMSE_model4_sel<-c()
+for (j in 1:20)
+{
+  print(j)
+  set.seed(runif(1,100,999))
+  boost.model=gbm(log_price~.,data=Xtrain4,distribution=
+  "gaussian",n.trees=400, interaction.depth=10, shrinkage = 0.1)
+  
+  #summary(boost.model1)
+  
+  pred_log_price=predict(boost.model,newdata=Xtest4, n.trees=400)
+
+  pred_price<-exp(pred_log_price)
+  price<-exp(Xtest4$log_price)
+  mse<-mean((pred_price-price)^2)
+  rmse<-sqrt(mse)
+  
+  mse
+  rmse
+  
+  Boosting_RMSE_model4_sel[j]<-rmse
+  
+}
+
+
+
+
+Boosting_RMSE_model5_sel<-c()
+for (j in 1:20)
+{
+  print(j)
+  set.seed(runif(1,100,999))
+  boost.model=gbm(log_price~.,data=Xtrain5,distribution=
+  "gaussian",n.trees=400, interaction.depth=10, shrinkage = 0.1)
+  
+  #summary(boost.model1)
+  
+  pred_log_price=predict(boost.model,newdata=Xtest5, n.trees=400)
+
+  pred_price<-exp(pred_log_price)
+  price<-exp(Xtest5$log_price)
+  mse<-mean((pred_price-price)^2)
+  rmse<-sqrt(mse)
+  
+  mse
+  rmse
+  
+  Boosting_RMSE_model5_sel[j]<-rmse
+  
+}
+
+
+Boosting_RMSE_model1_sel
+mean_1<-mean(Boosting_RMSE_model1_sel)
+mean_3<-mean(Boosting_RMSE_model3_sel)
+mean_4<-mean(Boosting_RMSE_model4_sel)
+mean_5<-mean(Boosting_RMSE_model5_sel)
+
+mean_1
+mean_3
+mean_4
+mean_5
+
+sd_1<-sd(Boosting_RMSE_model1_sel)
+sd_3<-sd(Boosting_RMSE_model3_sel)
+sd_4<-sd(Boosting_RMSE_model4_sel)
+sd_5<-sd(Boosting_RMSE_model5_sel)
+
+sd_1
+sd_3
+sd_4
+sd_5
+
+
+###confidence intervals
+mean_4 - sd_4
+mean_4 + sd_4
+
+mean_5 - sd_5
+mean_5 + sd_5
+
+
+```
+```{r Evaluate   - # trees vs RMSE}
+
+library(gbm)
+num_trees<-c(100,400,800,1200,1600, 2000, 2400,3000)
+RMSEvstrees_Model5<-c()
+
+#num_depth<-c(2,4,6,8,10)
+
+for (j in 1:length(num_trees))
+{
+  print(j)
+  set.seed(123)
+  #set.seed(runif(1,100,999))
+  n<-num_trees[j]
+  boost.model=gbm(log_price~.,data=Xtrain5,distribution=
+  "gaussian",n.trees=n, interaction.depth=10, shrinkage = 0.1)
+  
+  #summary(boost.model1)
+  
+  pred_log_price=predict(boost.model,newdata=Xtest5, n.trees=n)
+
+  pred_price<-exp(pred_log_price)
+  price<-exp(Xtest5$log_price)
+  mse<-mean((pred_price-price)^2)
+  rmse<-sqrt(mse)
+  
+  mse
+  rmse
+  
+  RMSEvstrees_Model5[j]<-rmse
+  
+ 
+}
+
+#Boosting_RMSE_cv<-rep(NA, length(num_trees)*length(num_depth))
+library(ggplot2)
+
+
+qplot(num_trees,RMSEvstrees_Model5, color="pink")+
+  geom_line()+
+  labs(x="number of trees")+
+  labs(y="RMSE")+
+  guides(colour= FALSE)
+
+min(Boosting_RMSE_cv_1)
+min(Boosting_RMSE_cv_2)
+min(Boosting_RMSE_cv_3)
+min(Boosting_RMSE_cv_4)
+min(Boosting_RMSE_cv_5)
+
+
+save.image("latest.RData")
+
+```
+
